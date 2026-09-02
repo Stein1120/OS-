@@ -1,0 +1,10 @@
+With two put threads, both can read the same old bucket head H before either
+publishes its new entry. Thread A creates A->H and stores A into table[i].
+Thread B creates B->H from its stale observation and then stores B into the
+same table[i]. B's store overwrites A's update, so A and its key become
+unreachable. With one thread these read-modify-write steps cannot interleave.
+
+The implementation uses one mutex per hash bucket. Operations on the same
+bucket are serialized, preventing a lost head update, while operations whose
+keys hash to different buckets can still execute in parallel. A single global
+mutex would also be correct but would remove useful put parallelism.
