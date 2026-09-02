@@ -1,0 +1,22 @@
+1. RISC-V function arguments are passed in a0 through a7. In main's call to
+printf, a0 holds the format-string pointer, a1 holds 12, and a2 holds 13.
+
+2. There is no call to f or g in main. GCC has evaluated/inlined the small
+functions and directly loads 12 into a1. The standalone f function also has no
+call to g; it performs addiw a0,a0,3 directly.
+
+3. In this build printf is located at virtual address 0x64e.
+
+4. The jalr to printf is at 0x3c. After it executes, ra contains 0x40, the
+address of the following instruction.
+
+5. The code prints "He110 World". 57616 is 0xe110, and little-endian storage
+places the bytes 0x72, 0x6c, 0x64, 0x00 ("rld\0") at increasing addresses.
+On a big-endian machine i should be 0x726c6400 to produce the same byte
+sequence in memory. 57616 need not change because integer formatting depends
+on its numeric value, not its byte order in memory.
+
+6. The value printed after y= is unspecified. The format asks printf for a
+second integer argument, but the caller supplies only one. printf therefore
+reads whatever value happens to be in the next argument location; in C this
+is undefined behavior.

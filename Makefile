@@ -87,6 +87,8 @@ OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
 
 CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
+CFLAGS += -march=rv64gc -mabi=lp64
+ASFLAGS = -march=rv64gc -mabi=lp64
 
 ifdef LAB
 LABUPPER = $(shell echo $(LAB) | tr a-z A-Z)
@@ -156,6 +158,9 @@ $U/usys.S : $U/usys.pl
 $U/usys.o : $U/usys.S
 	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
 
+# GCC 15 diagnoses the shell parser's intentional recursion.
+$U/sh.o: CFLAGS += -Wno-error=infinite-recursion
+
 $U/_forktest: $U/forktest.o $(ULIB)
 	# forktest has less library code linked in - needs to be small
 	# in order to be able to max out the proc table.
@@ -200,7 +205,8 @@ endif
 ifeq ($(LAB),traps)
 UPROGS += \
 	$U/_call\
-	$U/_bttest
+	$U/_bttest\
+	$U/_alarmtest
 endif
 
 ifeq ($(LAB),lazy)
