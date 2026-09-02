@@ -1,0 +1,22 @@
+1. Which other system calls could be accelerated with a shared page?
+
+Other values that are small, frequently read, and safe for the process to know
+can be placed in the read-only shared page. Examples include the parent PID,
+the current tick count used by uptime(), and read-only process statistics. The
+kernel would update those fields when their source values change, while user
+library functions would read them without executing ecall. Values that require
+side effects, synchronization, permission checks, or arbitrary-sized results
+should remain real system calls.
+
+2. Explain the vmprint output and the leaf pages.
+
+Sv39 uses three page-table levels. Each indented ".." is one level, and every
+printed non-leaf PTE points to the next page-table page. Low virtual addresses
+are reached through root entry 0. Leaf page 0 contains init's text and data and
+is user-readable and executable. Page 1 is the stack guard page: it is mapped
+but PTE_U is clear, so user mode can neither read nor write it. Page 2 is the
+user stack and is user-readable and writable. Near MAXVA, leaf 509 is USYSCALL
+(user read-only), leaf 510 is the trapframe (supervisor read/write), and leaf
+511 is the trampoline code (supervisor read/execute). PTE2PA removes the flag
+bits and converts the physical page number in each PTE back to its aligned
+physical address.
