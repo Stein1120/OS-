@@ -303,7 +303,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -312,19 +311,57 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+
+    // Writable user pages become read-only COW mappings in both processes.
+    if((flags & (PTE_W | PTE_U)) == (PTE_W | PTE_U)){
+      flags = (flags & ~PTE_W) | PTE_COW;
+      *pte = PA2PTE(pa) | flags;
     }
+
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
+      goto err;
+    krefinc((void *)pa);
   }
   return 0;
 
  err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
+}
+
+// Resolve a write to a copy-on-write user page.
+int
+cowalloc(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char *mem;
+
+  if(va >= MAXVA)
+    return -1;
+  va = PGROUNDDOWN(va);
+  pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & (PTE_V | PTE_U | PTE_COW)) !=
+                 (PTE_V | PTE_U | PTE_COW))
+    return -1;
+
+  pa = PTE2PA(*pte);
+  flags = (PTE_FLAGS(*pte) | PTE_W) & ~PTE_COW;
+
+  // If this process is the sole owner, no physical copy is needed.
+  if(krefcount((void *)pa) == 1){
+    *pte = PA2PTE(pa) | flags;
+    return 0;
+  }
+
+  mem = kalloc();
+  if(mem == 0)
+    return -1;
+  memmove(mem, (void *)pa, PGSIZE);
+  *pte = PA2PTE(mem) | flags;
+  kfree((void *)pa);
+  return 0;
 }
 
 // mark a PTE invalid for user access.
@@ -347,9 +384,15 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(va0 >= MAXVA)
+      return -1;
+    pte = walk(pagetable, va0, 0);
+    if(pte && (*pte & PTE_COW) && cowalloc(pagetable, va0) < 0)
+      return -1;
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
       return -1;
