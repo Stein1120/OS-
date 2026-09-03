@@ -119,6 +119,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  memset(p->vmas, 0, sizeof(p->vmas));
+  p->mmap_top = TRAPFRAME;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -163,6 +165,8 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  memset(p->vmas, 0, sizeof(p->vmas));
+  p->mmap_top = TRAPFRAME;
   p->state = UNUSED;
 }
 
@@ -289,6 +293,12 @@ fork(void)
   }
   np->sz = p->sz;
 
+  if(vma_fork(p, np) < 0){
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -343,6 +353,10 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+
+  // Mappings hold independent file references and may need to write
+  // shared pages back before the process disappears.
+  vma_unmap_all(p);
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
