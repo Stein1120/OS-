@@ -95,26 +95,85 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
-  
+  acquire(&e1000_lock);
+
+  uint32 i = regs[E1000_TDT];
+  struct tx_desc *d = &tx_ring[i];
+
+  // DD is set by the device after it has finished using the
+  // descriptor and its mbuf.  If it is clear, the ring is full.
+  if((d->status & E1000_TXD_STAT_DD) == 0){
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // The previous packet in this slot is now safe to release.
+  if(tx_mbufs[i])
+    mbuffree(tx_mbufs[i]);
+
+  tx_mbufs[i] = m;
+  d->addr = (uint64)m->head;
+  d->length = m->len;
+  d->cso = 0;
+  d->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  d->status = 0;
+  d->css = 0;
+  d->special = 0;
+
+  // Publish the completed descriptor before handing it to the NIC.
+  __sync_synchronize();
+  regs[E1000_TDT] = (i + 1) % TX_RING_SIZE;
+
+  release(&e1000_lock);
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
-  //
+  for(;;){
+    acquire(&e1000_lock);
+
+    // RDT names the last descriptor returned to the device, so the
+    // following slot is the next one the driver must inspect.
+    uint32 i = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    struct rx_desc *d = &rx_ring[i];
+    if((d->status & E1000_RXD_STAT_DD) == 0){
+      release(&e1000_lock);
+      break;
+    }
+
+    struct mbuf *m = rx_mbufs[i];
+    struct mbuf *replacement = mbufalloc(0);
+    if(replacement == 0){
+      // Drop this packet, but keep its buffer attached to the ring.
+      m->len = 0;
+      d->status = 0;
+      __sync_synchronize();
+      regs[E1000_RDT] = i;
+      release(&e1000_lock);
+      continue;
+    }
+
+    uint8 status = d->status;
+    uint8 errors = d->errors;
+    m->len = d->length;
+
+    rx_mbufs[i] = replacement;
+    d->addr = (uint64)replacement->head;
+    d->status = 0;
+    __sync_synchronize();
+    regs[E1000_RDT] = i;
+
+    // net_rx() may transmit an ARP response, so do not call it while
+    // holding e1000_lock.
+    release(&e1000_lock);
+
+    if(errors == 0 && (status & E1000_RXD_STAT_EOP))
+      net_rx(m);
+    else
+      mbuffree(m);
+  }
 }
 
 void
