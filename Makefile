@@ -82,6 +82,7 @@ QEMU = qemu-system-riscv64
 
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
+ASFLAGS = -march=rv64gc -mabi=lp64
 LD = $(TOOLPREFIX)ld
 OBJCOPY = $(TOOLPREFIX)objcopy
 OBJDUMP = $(TOOLPREFIX)objdump
@@ -98,6 +99,7 @@ CFLAGS += -MD
 CFLAGS += -mcmodel=medany
 CFLAGS += -ffreestanding -fno-common -nostdlib -mno-relax
 CFLAGS += -I.
+CFLAGS += -march=rv64gc -mabi=lp64
 CFLAGS += $(shell $(CC) -fno-stack-protector -E -x c /dev/null >/dev/null 2>&1 && echo -fno-stack-protector)
 
 ifeq ($(LAB),net)
@@ -131,7 +133,7 @@ $K/%.o: $K/%.c
 
 
 $U/initcode: $U/initcode.S
-	$(CC) $(CFLAGS) -march=rv64g -nostdinc -I. -Ikernel -c $U/initcode.S -o $U/initcode.o
+	$(CC) $(CFLAGS) -nostdinc -I. -Ikernel -c $U/initcode.S -o $U/initcode.o
 	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $U/initcode.out $U/initcode.o
 	$(OBJCOPY) -S -O binary $U/initcode.out $U/initcode
 	$(OBJDUMP) -S $U/initcode.o > $U/initcode.asm
@@ -140,6 +142,8 @@ tags: $(OBJS) _init
 	etags *.S *.c
 
 ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
+
+$U/sh.o: CFLAGS += -Wno-error=infinite-recursion
 
 ifeq ($(LAB),$(filter $(LAB), lock))
 ULIB += $U/statistics.o
